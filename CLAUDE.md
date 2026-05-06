@@ -39,7 +39,7 @@ Ollama Admin is a web-based administration panel for managing one or more [Ollam
 All Ollama API requests go through `/api/proxy/[...path]` — never call Ollama directly from the client. The proxy handles server selection, logging, token counting, and error normalization.
 
 ### Auth & Middleware
-- `middleware.ts` enforces auth on all routes except public paths (`/api/auth`, `/api/setup`, `/api/health`, `/setup`, `/auth`)
+- `proxy.ts` (Next.js 16 file convention, replaces `middleware.ts`) enforces auth on all routes except public paths (`/api/auth`, `/api/setup`, `/api/health`, `/setup`, `/auth`)
 - Setup-not-completed redirects to `/setup` wizard
 - `AUTH_DISABLED=true` bypasses login for local dev
 - Admin-only guards on: `/admin/users`, `/api/users`, `/discover`, `/api/catalog`

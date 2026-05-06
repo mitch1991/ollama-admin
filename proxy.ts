@@ -12,7 +12,7 @@ function withNoCache(res: NextResponse, path: string): NextResponse {
   return res;
 }
 
-export async function middleware(req: NextRequest) {
+export async function proxy(req: NextRequest) {
   const start = Date.now();
   const { method } = req;
   const path = req.nextUrl.pathname;
@@ -119,5 +119,22 @@ function logRequest(method: string, path: string, status: number, ms: number, no
 }
 
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico|logo|icon|apple).*)"],
+  matcher: [
+    "/",
+    "/api/:path*",
+    "/admin/:path*",
+    "/auth/:path*",
+    "/chat",
+    "/chat/:path*",
+    "/discover",
+    "/discover/:path*",
+    "/gpu",
+    "/gpu/:path*",
+    "/settings",
+    "/settings/:path*",
+    "/setup",
+    "/setup/:path*",
+    "/tools",
+    "/tools/:path*",
+  ],
 };
