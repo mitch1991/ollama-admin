@@ -35,7 +35,9 @@ export async function middleware(req: NextRequest) {
   // Check if setup is completed — redirect to /setup if not (cached 60s)
   if (!setupCompleted || Date.now() - setupCheckedAt > 60_000) {
     try {
-      const statusUrl = new URL("/api/setup/status", req.url);
+      const statusUrl = req.nextUrl.clone();
+      statusUrl.pathname = "/api/setup/status";
+      statusUrl.search = "";
       const statusRes = await fetch(statusUrl, { cache: "no-store" });
       if (statusRes.ok) {
         const data = await statusRes.json();
@@ -49,7 +51,10 @@ export async function middleware(req: NextRequest) {
 
   if (!setupCompleted) {
     logRequest(method, path, 302, Date.now() - start, "setup-redirect");
-    return NextResponse.redirect(new URL("/setup", req.url));
+    const setupUrl = req.nextUrl.clone();
+    setupUrl.pathname = "/setup";
+    setupUrl.search = "";
+    return NextResponse.redirect(setupUrl);
   }
 
   // Dev bypass — opt-in to disable auth for local development
@@ -79,7 +84,9 @@ export async function middleware(req: NextRequest) {
         headers: { "Content-Type": "application/json" },
       });
     }
-    const signInUrl = new URL("/auth/signin", req.url);
+    const signInUrl = req.nextUrl.clone();
+    signInUrl.pathname = "/auth/signin";
+    signInUrl.search = "";
     signInUrl.searchParams.set("callbackUrl", path);
     logRequest(method, path, 302, Date.now() - start, "auth-redirect");
     return NextResponse.redirect(signInUrl);
@@ -94,7 +101,10 @@ export async function middleware(req: NextRequest) {
     path.startsWith("/settings");
   if (isAdminOnly && token?.role !== "admin") {
     logRequest(method, path, 403, Date.now() - start, "forbidden");
-    return NextResponse.redirect(new URL("/", req.url));
+    const homeUrl = req.nextUrl.clone();
+    homeUrl.pathname = "/";
+    homeUrl.search = "";
+    return NextResponse.redirect(homeUrl);
   }
 
   const res = withNoCache(NextResponse.next(), path);

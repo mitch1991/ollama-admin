@@ -12,6 +12,10 @@ WORKDIR /app
 RUN apk add --no-cache openssl
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
+# Optional sub-path for reverse-proxy deployments (e.g. /ollama-admin).
+# Must be set at build time — Next.js bakes basePath into the bundle.
+ARG NEXT_PUBLIC_BASE_PATH=""
+ENV NEXT_PUBLIC_BASE_PATH=${NEXT_PUBLIC_BASE_PATH}
 RUN npx prisma generate
 RUN npm run build
 

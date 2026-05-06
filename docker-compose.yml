@@ -3,7 +3,13 @@ version: "3.9"
 services:
   ollama-admin:
     image: ghcr.io/ollama-admin/ollama-admin:${VERSION:-latest}
-    build: .
+    build:
+      context: .
+      args:
+        # Set when serving the app behind a reverse proxy at a sub-path
+        # (e.g. NEXT_PUBLIC_BASE_PATH=/ollama-admin). Must be a build arg —
+        # Next.js bakes basePath into the client bundle.
+        NEXT_PUBLIC_BASE_PATH: ${NEXT_PUBLIC_BASE_PATH:-}
     ports:
       - "3000:3000"
     environment:
