@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
 import Image from "next/image";
 import { useTranslations } from "next-intl";
+import { withBasePath } from "@/lib/base-path";
 
 export default function SignInPage() {
   const router = useRouter();
@@ -41,7 +42,7 @@ export default function SignInPage() {
     if (result?.error) {
       setError(t("invalidCredentials"));
     } else {
-      window.location.href = "/";
+      window.location.href = withBasePath("/");
     }
   };
 
