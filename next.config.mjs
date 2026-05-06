@@ -10,7 +10,6 @@ const normalizedBasePath = basePath.endsWith("/") ? basePath.slice(0, -1) : base
 const nextConfig = {
   output: "standalone",
   basePath: normalizedBasePath || undefined,
-  assetPrefix: normalizedBasePath || undefined,
 };
 
 export default withNextIntl(nextConfig);
