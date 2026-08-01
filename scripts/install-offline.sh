@@ -201,6 +201,8 @@ cat > docker-compose.yml <<YAML
 services:
   ollama-admin:
     image: ${APP_IMAGE}
+    # Repair the SQLite volume, then the entrypoint drops to UID/GID 1001.
+    user: "0:0"
     ports:
       - "${PORT}:3000"
     environment:

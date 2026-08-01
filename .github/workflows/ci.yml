@@ -28,7 +28,11 @@ jobs:
         with:
           context: .
           push: false
+          load: true
+          tags: ollama-admin:ci
           platforms: linux/amd64
+      - name: Verify SQLite volume permissions
+        run: bash scripts/test-sqlite-container.sh ollama-admin:ci
       - name: Build gpu-agent image (no push)
         if: hashFiles('gpu-agent/Dockerfile') != ''
         uses: docker/build-push-action@v5

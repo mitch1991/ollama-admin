@@ -734,6 +734,26 @@ Docker images are tagged as `:latest`, `:0.11.0`, `:0.11`, `:0`, and `:sha-<comm
 </details>
 
 <details>
+<summary><strong>SQLite reports "Unable to open the database file"</strong></summary>
+
+Compose files generated before v0.15.4 do not start the entrypoint with the temporary permission needed to repair an existing root-owned volume. Add this setting under the `ollama-admin` service, then update normally:
+
+```yaml
+services:
+  ollama-admin:
+    user: "0:0"
+```
+
+```bash
+docker compose pull
+docker compose up -d
+```
+
+The entrypoint repairs only the SQLite database and its sidecar files, then immediately runs Prisma and the application as UID/GID 1001.
+
+</details>
+
+<details>
 <summary><strong>Chat responses are slow or timing out</strong></summary>
 
 - Confirm the model is loaded: **Admin → GPU** shows running models
