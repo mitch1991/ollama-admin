@@ -362,6 +362,8 @@ version: "3.9"
 services:
   ollama-admin:
     image: ghcr.io/ollama-admin/ollama-admin:${VERSION}
+    # Repair the SQLite volume, then the entrypoint drops to UID/GID 1001.
+    user: "0:0"
     ports:
       - "${port}:3000"
     env_file: .env
