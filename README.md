@@ -115,7 +115,7 @@ For production deployments or when you need full control over the configuration.
 ```bash
 git clone https://github.com/ollama-admin/ollama-admin.git
 cd ollama-admin
-cp .env.example .env   # edit as needed
+cp .env.docker.example .env   # edit NEXTAUTH_SECRET and other settings as needed
 docker compose up -d
 ```
 
@@ -411,10 +411,10 @@ Browse the full Ollama model catalog from inside the app, pull models to any con
 
 After starting Ollama Admin for the first time, open [http://localhost:3000](http://localhost:3000). The setup wizard walks you through:
 
-1. **Connect to Ollama** — enter your Ollama URL or let it auto-detect `localhost:11434`
-2. **Pull a model** — optionally download a first model (or skip and do it later)
-3. **Configure** — set server name, theme, and log retention
-4. **Create admin** — set your username and password
+1. **Create admin** — set your username and password, then the wizard signs you in
+2. **Connect to Ollama** — enter your Ollama URL or use the URL supplied through `DEFAULT_OLLAMA_URL`
+3. **Pull a model** — optionally download a first model, or skip it until later
+4. **Configure** — choose the theme and log retention, then finish setup
 
 After the wizard completes, you land on the dashboard. You can add more servers and users from the admin panel.
 
@@ -429,7 +429,7 @@ Copy `.env.example` to `.env` and adjust as needed.
 | `DATABASE_URL` | `file:./ollama-admin.db` | SQLite path or PostgreSQL connection string |
 | `NEXTAUTH_SECRET` | auto-generated | JWT signing secret — **set a strong value in production** |
 | `NEXTAUTH_URL` | `http://localhost:3000` | Public app URL — must match your deployment URL |
-| `DEFAULT_OLLAMA_URL` | `http://localhost:11434` | Default Ollama server URL |
+| `DEFAULT_OLLAMA_URL` | `http://localhost:11434` outside Docker; `http://host.docker.internal:11434` in the Docker template | Default Ollama server URL |
 | `AUTH_DISABLED` | `false` | Bypass login entirely — **dev only, never in production** |
 | `LOG_RETENTION_DAYS` | `90` | Auto-purge logs older than N days (`0` = never purge) |
 | `LOG_STORE_PROMPTS` | `true` | Store full prompt/response content; set `false` for metadata-only logging |
@@ -708,9 +708,18 @@ Docker images are tagged as `:latest`, `:0.11.0`, `:0.11`, `:0`, and `:sha-<comm
 <summary><strong>"Connection refused" when adding an Ollama server</strong></summary>
 
 - Verify Ollama is running: `ollama list`
-- Inside Docker on Mac/Windows, use `http://host.docker.internal:11434` instead of `localhost`
-- On Linux, use the host's actual IP: `ip route show default | awk '{print $3}'`
-- Check firewall: `sudo ufw allow 11434/tcp`
+- From Docker, use `http://host.docker.internal:11434` instead of `localhost`. The official Compose file maps this name to the host gateway on Linux and WSL.
+- Ollama binds to `127.0.0.1:11434` by default. For a systemd installation on Linux/WSL, run `sudo systemctl edit ollama.service`, add the two lines shown below, then run `sudo systemctl daemon-reload && sudo systemctl restart ollama`:
+
+  ```ini
+  [Service]
+  Environment="OLLAMA_HOST=0.0.0.0:11434"
+  ```
+
+- Binding to `0.0.0.0` exposes Ollama on every host interface, and Ollama does not provide perimeter authentication by default. Restrict port `11434` to trusted Docker bridge networks/interfaces and do not publish it to the Internet.
+- If you maintain a custom Compose file on Linux/WSL, add `extra_hosts: ["host.docker.internal:host-gateway"]` to the Ollama Admin service.
+
+See the [Docker host networking guidance](https://docs.docker.com/compose/how-tos/networking/#connect-a-container-to-a-service-on-the-host) and [Ollama FAQ](https://github.com/ollama/ollama/blob/main/docs/faq.mdx#how-can-i-expose-ollama-on-my-network) for the underlying settings.
 
 </details>
 

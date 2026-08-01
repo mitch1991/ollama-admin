@@ -366,6 +366,8 @@ services:
     user: "0:0"
     ports:
       - "${port}:3000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     env_file: .env
     environment:
       PORT: "3000"

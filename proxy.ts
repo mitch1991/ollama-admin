@@ -55,14 +55,14 @@ export async function proxy(req: NextRequest) {
   const publicPaths = ["/api/auth", "/api/setup", "/api/health", "/_next", "/favicon.ico"];
   if (publicPaths.some((p) => path.startsWith(p))) {
     const res = withNoCache(NextResponse.next(), path);
-    logRequest(method, path, res.status, Date.now() - start);
+    logForward(method, path, Date.now() - start);
     return res;
   }
 
   // Allow setup and auth pages without token
   if (path.startsWith("/setup") || path.startsWith("/auth")) {
     const res = NextResponse.next();
-    logRequest(method, path, res.status, Date.now() - start);
+    logForward(method, path, Date.now() - start);
     return res;
   }
 
@@ -80,7 +80,7 @@ export async function proxy(req: NextRequest) {
   // Dev bypass — opt-in to disable auth for local development
   if (process.env.AUTH_DISABLED === "true") {
     const res = withNoCache(NextResponse.next(), path);
-    logRequest(method, path, res.status, Date.now() - start);
+    logForward(method, path, Date.now() - start, "auth-disabled");
     return res;
   }
 
@@ -91,7 +91,7 @@ export async function proxy(req: NextRequest) {
 
   if (hasApiKey && isOllamaProxy) {
     const res = withNoCache(NextResponse.next(), path);
-    logRequest(method, path, res.status, Date.now() - start, "api-key");
+    logForward(method, path, Date.now() - start, "api-key");
     return res;
   }
 
@@ -129,8 +129,14 @@ export async function proxy(req: NextRequest) {
   }
 
   const res = withNoCache(NextResponse.next(), path);
-  logRequest(method, path, res.status, Date.now() - start);
+  logForward(method, path, Date.now() - start);
   return res;
+}
+
+function logForward(method: string, path: string, ms: number, note?: string) {
+  if (path.startsWith("/_next")) return;
+  const extra = note ? ` (${note})` : "";
+  console.log(`${new Date().toISOString()} [HTTP] ${method} ${path} forward ${ms}ms${extra}`);
 }
 
 function logRequest(method: string, path: string, status: number, ms: number, note?: string) {

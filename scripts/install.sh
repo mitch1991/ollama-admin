@@ -244,6 +244,8 @@ services:
     user: "0:0"
     ports:
       - "${PORT}:3000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
       DATABASE_URL: \${DATABASE_URL:-file:/data/ollama-admin.db}
       DEFAULT_OLLAMA_URL: \${DEFAULT_OLLAMA_URL:-${OLLAMA_URL}}
@@ -270,6 +272,18 @@ else
   spinner_stop
   # Retry with visible output so the user sees what went wrong
   docker pull "${IMAGE}:${VERSION}" || fail "Failed to pull image. Check your internet connection or try again."
+fi
+
+# Test the configured URL from the same Docker network used by Ollama Admin.
+step "Checking Ollama from Docker"
+if $COMPOSE run --rm --no-deps --entrypoint node ollama-admin -e \
+  'const base=(process.env.DEFAULT_OLLAMA_URL||"").replace(/\/$/,""); fetch(base+"/api/version",{signal:AbortSignal.timeout(5000)}).then((r)=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))' \
+  >/dev/null 2>&1; then
+  ok "Ollama is reachable from the container at ${OLLAMA_URL}"
+else
+  warn "Could not reach Ollama from the Ollama Admin container at ${OLLAMA_URL}."
+  echo -e "  On Linux/WSL, configure ${BOLD}OLLAMA_HOST=0.0.0.0:11434${NC} in the Ollama service and restart it."
+  echo -e "  Restrict port 11434 to trusted Docker networks because Ollama does not add perimeter authentication."
 fi
 
 # ── Start ──

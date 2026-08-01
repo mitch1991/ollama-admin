@@ -42,6 +42,132 @@ export interface OllamaPullProgress {
   completed?: number;
 }
 
+interface ErrorLike {
+  cause?: unknown;
+  code?: unknown;
+  errors?: unknown;
+  message?: unknown;
+}
+
+function collectErrorCodes(error: unknown): Set<string> {
+  const codes = new Set<string>();
+  const pending: unknown[] = [error];
+  const seen = new Set<unknown>();
+
+  while (pending.length > 0) {
+    const current = pending.pop();
+    if (!current || typeof current !== "object" || seen.has(current)) continue;
+
+    seen.add(current);
+    const errorLike = current as ErrorLike;
+    if (typeof errorLike.code === "string") codes.add(errorLike.code);
+    if (errorLike.cause) pending.push(errorLike.cause);
+    if (Array.isArray(errorLike.errors)) pending.push(...errorLike.errors);
+  }
+
+  return codes;
+}
+
+export function normalizeOllamaUrl(value: unknown): string {
+  if (typeof value !== "string" || !value.trim()) {
+    throw new Error("URL is required");
+  }
+
+  let parsed: URL;
+  try {
+    parsed = new URL(value.trim());
+  } catch {
+    throw new Error("Enter a valid Ollama URL");
+  }
+
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error("Ollama URL must use http or https");
+  }
+  if (parsed.username || parsed.password) {
+    throw new Error("Ollama URL must not include embedded credentials");
+  }
+  if (parsed.search || parsed.hash) {
+    throw new Error("Ollama URL must not include a query string or fragment");
+  }
+
+  return parsed.toString().replace(/\/$/, "");
+}
+
+export function redactOllamaUrl(value: string): string {
+  try {
+    const parsed = new URL(value);
+    parsed.username = "";
+    parsed.password = "";
+    parsed.search = "";
+    parsed.hash = "";
+    return parsed.toString().replace(/\/$/, "");
+  } catch {
+    return "[invalid Ollama URL]";
+  }
+}
+
+export function buildOllamaUrl(baseUrl: string, path: string): string {
+  const normalizedBaseUrl = normalizeOllamaUrl(baseUrl);
+  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+  return `${normalizedBaseUrl}${normalizedPath}`;
+}
+
+/** Turn low-level fetch failures into guidance that is useful from a container. */
+export function formatOllamaConnectionError(
+  baseUrl: string,
+  error: unknown
+): string {
+  const message = error instanceof Error ? error.message : "Connection failed";
+
+  // Ollama answered, so networking hints would be misleading.
+  if (message.startsWith("Ollama API error:")) return message;
+
+  let hostname = "";
+  let displayUrl = baseUrl;
+  try {
+    const parsed = new URL(baseUrl);
+    hostname = parsed.hostname.toLowerCase();
+    displayUrl = redactOllamaUrl(baseUrl);
+  } catch {
+    return `Invalid Ollama URL: ${redactOllamaUrl(baseUrl)}`;
+  }
+
+  const codes = collectErrorCodes(error);
+  const codeSuffix = codes.size > 0 ? ` (${Array.from(codes).join(", ")})` : "";
+  hostname = hostname.replace(/^\[|\]$/g, "").replace(/\.$/, "");
+  const isLoopback =
+    hostname === "localhost" ||
+    hostname === "::1" ||
+    hostname === "0.0.0.0" ||
+    /^127(?:\.\d{1,3}){3}$/.test(hostname);
+
+  if (isLoopback) {
+    return `Could not reach Ollama at ${displayUrl}${codeSuffix}. From Docker, localhost points to the Ollama Admin container. Use http://host.docker.internal:11434 instead.`;
+  }
+
+  if (hostname === "host.docker.internal") {
+    if (codes.has("ENOTFOUND") || codes.has("EAI_AGAIN")) {
+      return `Could not resolve host.docker.internal${codeSuffix}. Add "host.docker.internal:host-gateway" to extra_hosts for the Ollama Admin service in Docker Compose.`;
+    }
+
+    if (codes.has("ECONNREFUSED")) {
+      return `Ollama refused the connection at ${displayUrl}${codeSuffix}. Ollama listens on 127.0.0.1 by default. Configure OLLAMA_HOST=0.0.0.0:11434 in the Ollama service, restart it, and restrict port 11434 to trusted Docker networks.`;
+    }
+
+    return `Could not reach Ollama at ${displayUrl}${codeSuffix}. Ensure Docker Compose maps host.docker.internal to host-gateway and Ollama is listening on 0.0.0.0:11434.`;
+  }
+
+  if (codes.has("ECONNREFUSED")) {
+    return `Ollama refused the connection at ${displayUrl}${codeSuffix}. Ensure Ollama is running and listening on an address reachable from Docker. Configure OLLAMA_HOST in the Ollama service rather than only in the current shell.`;
+  }
+
+  if (codes.has("ETIMEDOUT") || codes.has("UND_ERR_CONNECT_TIMEOUT")) {
+    return `Connection to Ollama timed out at ${displayUrl}${codeSuffix}. Check the address, firewall, and Docker network routing.`;
+  }
+
+  return `Could not reach Ollama at ${displayUrl}${codeSuffix}. Check that Ollama is running and reachable from the container.`;
+}
+
 export interface OllamaChatMessage {
   role: "system" | "user" | "assistant";
   content: string;
@@ -88,7 +214,7 @@ export async function ollamaFetch<T>(
   path: string,
   options?: RequestInit
 ): Promise<T> {
-  const url = `${baseUrl.replace(/\/$/, "")}${path}`;
+  const url = buildOllamaUrl(baseUrl, path);
   const res = await fetch(url, {
     ...options,
     cache: "no-store",
@@ -156,7 +282,7 @@ export function pullModelStream(
   baseUrl: string,
   name: string
 ): ReadableStream<OllamaPullProgress> {
-  const url = `${baseUrl.replace(/\/$/, "")}/api/pull`;
+  const url = buildOllamaUrl(baseUrl, "/api/pull");
 
   return new ReadableStream({
     async start(controller) {

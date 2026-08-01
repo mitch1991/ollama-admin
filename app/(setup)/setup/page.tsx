@@ -1,8 +1,9 @@
 "use client";
 
 import { useTranslations } from "next-intl";
-import { useState, useEffect } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { signIn } from "next-auth/react";
 
 type ConnectionStatus = "idle" | "testing" | "online" | "offline";
 
@@ -49,22 +50,51 @@ export default function SetupPage() {
   const [adminConfirm, setAdminConfirm] = useState("");
   const [adminError, setAdminError] = useState("");
   const [adminLoading, setAdminLoading] = useState(false);
+  const [finishError, setFinishError] = useState("");
+  const [finishing, setFinishing] = useState(false);
+  const urlTouchedRef = useRef(false);
+  const connectionRequestRef = useRef(0);
+  const connectionAbortRef = useRef<AbortController | null>(null);
+
+  const loadSetupConfiguration = useCallback(async () => {
+    const response = await fetch("/api/setup/config");
+    if (response.status === 403) {
+      router.replace("/auth/signin?callbackUrl=%2Fsetup");
+      return;
+    }
+    if (!response.ok) {
+      throw new Error("Could not load setup configuration");
+    }
+
+    const data = await response.json();
+    if (!urlTouchedRef.current && typeof data.defaultOllamaUrl === "string") {
+      setUrl(data.defaultOllamaUrl);
+    }
+    setStep(2);
+  }, [router]);
 
   useEffect(() => {
+    let cancelled = false;
+
     fetch("/api/setup/status")
       .then((r) => r.json())
-      .then((data) => {
+      .then(async (data) => {
+        if (cancelled) return;
         if (data.completed) {
           router.push("/");
           return;
         }
         if (data.hasAdmin) {
-          setStep(2);
+          await loadSetupConfiguration();
         }
       })
       .catch(() => {});
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+
+    return () => {
+      cancelled = true;
+      connectionAbortRef.current?.abort();
+    };
+  }, [loadSetupConfiguration, router]);
 
   const handleCreateAdmin = async () => {
     setAdminError("");
@@ -99,7 +129,17 @@ export default function SetupPage() {
         return;
       }
 
-      setStep(2);
+      const signInResult = await signIn("credentials", {
+        username: adminUsername,
+        password: adminPassword,
+        redirect: false,
+      });
+      if (!signInResult?.ok) {
+        router.push("/auth/signin?callbackUrl=%2Fsetup");
+        return;
+      }
+
+      await loadSetupConfiguration();
     } catch {
       setAdminError("Network error");
     } finally {
@@ -108,15 +148,23 @@ export default function SetupPage() {
   };
 
   const testConnection = async (testUrl: string) => {
+    connectionAbortRef.current?.abort();
+    const controller = new AbortController();
+    connectionAbortRef.current = controller;
+    const requestId = ++connectionRequestRef.current;
+
     setConnectionStatus("testing");
+    setVersion("");
     setErrorMsg("");
     try {
       const res = await fetch("/api/setup/test-connection", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ url: testUrl }),
+        signal: controller.signal,
       });
       const data = await res.json();
+      if (requestId !== connectionRequestRef.current) return;
       if (data.status === "online") {
         setConnectionStatus("online");
         setVersion(data.version);
@@ -124,10 +172,23 @@ export default function SetupPage() {
         setConnectionStatus("offline");
         setErrorMsg(data.error || "Could not connect to Ollama");
       }
-    } catch {
+    } catch (error) {
+      if (controller.signal.aborted || requestId !== connectionRequestRef.current) {
+        return;
+      }
       setConnectionStatus("offline");
-      setErrorMsg("Network error — is the app running?");
+      setErrorMsg("Network error. Is Ollama Admin still running?");
     }
+  };
+
+  const handleUrlChange = (newUrl: string) => {
+    urlTouchedRef.current = true;
+    connectionAbortRef.current?.abort();
+    connectionRequestRef.current += 1;
+    setUrl(newUrl);
+    setConnectionStatus("idle");
+    setVersion("");
+    setErrorMsg("");
   };
 
   const handleStep2Next = async () => {
@@ -140,9 +201,13 @@ export default function SetupPage() {
       if (res.ok) {
         const server = await res.json();
         setServerId(server.id);
+        setStep(3);
+        return;
       }
+      const data = await res.json().catch(() => ({}));
+      setConnectionStatus("offline");
+      setErrorMsg(data.error || "Could not save the Ollama server");
     }
-    setStep(3);
   };
 
   const toggleModel = (name: string) => {
@@ -231,13 +296,26 @@ export default function SetupPage() {
   };
 
   const handleFinish = async () => {
-    await fetch("/api/settings", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ logRetentionDays: logRetention }),
-    });
-    await fetch("/api/setup/complete", { method: "POST" });
-    router.push("/auth/signin");
+    setFinishError("");
+    setFinishing(true);
+    try {
+      const response = await fetch("/api/setup/complete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ logRetentionDays: logRetention }),
+      });
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.error || "Could not complete setup");
+      }
+      router.push("/");
+    } catch (error) {
+      setFinishError(
+        error instanceof Error ? error.message : "Could not complete setup"
+      );
+    } finally {
+      setFinishing(false);
+    }
   };
 
   return (
@@ -344,12 +422,13 @@ export default function SetupPage() {
                   <input
                     type="url"
                     value={url}
-                    onChange={(e) => setUrl(e.target.value)}
+                    onChange={(e) => handleUrlChange(e.target.value)}
                     className="flex-1 rounded-md border bg-transparent px-3 py-2 text-sm"
                   />
                   <button
                     onClick={() => testConnection(url)}
-                    className="rounded-md border px-3 py-2 text-sm hover:bg-[hsl(var(--accent))]"
+                    disabled={connectionStatus === "testing"}
+                    className="rounded-md border px-3 py-2 text-sm hover:bg-[hsl(var(--accent))] disabled:opacity-50"
                   >
                     {t("testConnection")}
                   </button>
@@ -527,11 +606,17 @@ export default function SetupPage() {
                 </button>
                 <button
                   onClick={handleFinish}
-                  className="flex-1 rounded-md bg-[hsl(var(--primary))] px-4 py-2 text-sm text-[hsl(var(--primary-foreground))]"
+                  disabled={finishing}
+                  className="flex-1 rounded-md bg-[hsl(var(--primary))] px-4 py-2 text-sm text-[hsl(var(--primary-foreground))] disabled:opacity-50"
                 >
-                  Finish
+                  {finishing ? "Finishing..." : "Finish"}
                 </button>
               </div>
+              {finishError && (
+                <p role="alert" className="text-sm text-[hsl(var(--destructive))]">
+                  {finishError}
+                </p>
+              )}
             </div>
           </div>
         )}

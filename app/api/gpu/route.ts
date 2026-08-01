@@ -2,6 +2,7 @@ export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { logger } from "@/lib/logger";
+import { buildOllamaUrl, redactOllamaUrl } from "@/lib/ollama";
 import { lookupGpuSpecs } from "@/lib/gpu-specs";
 import { scoreModel, type ModelScore } from "@/lib/model-scoring";
 
@@ -121,7 +122,7 @@ export async function GET() {
       };
 
       try {
-        const psRes = await fetch(`${server.url}/api/ps`, {
+        const psRes = await fetch(buildOllamaUrl(server.url, "/api/ps"), {
           signal: AbortSignal.timeout(5000),
         });
         if (psRes.ok) {
@@ -130,7 +131,10 @@ export async function GET() {
         }
       } catch {
         result.error = "Could not connect to Ollama server";
-        logger.warn("Cannot reach Ollama", { server: server.name, url: server.url });
+        logger.warn("Cannot reach Ollama", {
+          server: server.name,
+          url: redactOllamaUrl(server.url),
+        });
       }
 
       if (server.gpuAgentUrl) {
@@ -149,7 +153,7 @@ export async function GET() {
       // Fetch available models and compute compatibility scores
       if (result.gpuInfo && !result.error) {
         try {
-          const tagsRes = await fetch(`${server.url}/api/tags`, {
+          const tagsRes = await fetch(buildOllamaUrl(server.url, "/api/tags"), {
             signal: AbortSignal.timeout(5000),
           });
           if (tagsRes.ok) {

@@ -31,6 +31,28 @@ beforeEach(() => {
 });
 
 describe("proxy setup guard", () => {
+  it("labels pass-through requests as forward instead of a false 200", async () => {
+    findSetupSetting.mockResolvedValue({ value: "true" });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const proxy = await loadProxy();
+
+    await proxy(
+      new NextRequest("http://localhost/api/servers/srv_1/test", {
+        method: "POST",
+      })
+    );
+
+    expect(logSpy).toHaveBeenCalledWith(
+      expect.stringContaining(
+        "[HTTP] POST /api/servers/srv_1/test forward"
+      )
+    );
+    expect(logSpy).not.toHaveBeenCalledWith(
+      expect.stringContaining("/api/servers/srv_1/test 200")
+    );
+    logSpy.mockRestore();
+  });
+
   it("reads completed setup state from the database without a self-fetch", async () => {
     findSetupSetting.mockResolvedValue({ value: "true" });
     const fetchSpy = vi.spyOn(globalThis, "fetch");

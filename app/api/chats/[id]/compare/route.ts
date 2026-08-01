@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { getRateLimitKey } from "@/lib/with-rate-limit";
 import { logger } from "@/lib/logger";
+import { buildOllamaUrl } from "@/lib/ollama";
 import { logAsync } from "@/lib/log-async";
 
 interface ModelTarget {
@@ -124,7 +125,7 @@ export async function POST(
     targets.map(async (t) => {
       const server = serverMap.get(t.serverId)!;
       try {
-        const res = await fetch(`${server.url}/api/chat`, {
+        const res = await fetch(buildOllamaUrl(server.url, "/api/chat"), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ ...bodyBase, model: t.model }),

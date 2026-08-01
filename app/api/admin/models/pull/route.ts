@@ -3,6 +3,10 @@ import { prisma } from "@/lib/prisma";
 import { pullManager } from "@/lib/pull-manager";
 import { logger } from "@/lib/logger";
 import { requireAdmin } from "@/lib/require-admin";
+import {
+  buildOllamaUrl,
+  formatOllamaConnectionError,
+} from "@/lib/ollama";
 
 export async function POST(req: NextRequest) {
   const session = await requireAdmin();
@@ -31,11 +35,18 @@ export async function POST(req: NextRequest) {
 
   // Stream mode: passthrough to Ollama (used by Models admin page)
   if (stream) {
-    const ollamaRes = await fetch(`${server.url}/api/pull`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name, stream: true }),
-    });
+    let ollamaRes: Response;
+    try {
+      ollamaRes = await fetch(buildOllamaUrl(server.url, "/api/pull"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, stream: true }),
+      });
+    } catch (error) {
+      const message = formatOllamaConnectionError(server.url, error);
+      logger.error("Pull connection failed", { model: name, error: message });
+      return NextResponse.json({ error: message }, { status: 502 });
+    }
 
     if (!ollamaRes.ok || !ollamaRes.body) {
       logger.error("Pull failed", { model: name, status: ollamaRes.status });

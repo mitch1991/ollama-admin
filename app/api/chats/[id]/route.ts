@@ -11,7 +11,6 @@ export async function GET(
     where: { id: id },
     include: {
       messages: { orderBy: { createdAt: "asc" } },
-      server: true,
     },
   });
 
