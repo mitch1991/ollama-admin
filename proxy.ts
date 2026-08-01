@@ -1,9 +1,43 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { getToken } from "next-auth/jwt";
+import { prisma } from "@/lib/prisma";
 
 let setupCompleted = false;
 let setupCheckedAt = 0;
+let setupCheckInFlight: Promise<boolean | null> | null = null;
+const SETUP_CACHE_TTL_MS = 60_000;
+
+async function getSetupCompleted(): Promise<boolean | null> {
+  if (setupCompleted && Date.now() - setupCheckedAt < SETUP_CACHE_TTL_MS) {
+    return true;
+  }
+
+  // Share a cold-start lookup between concurrent requests on this instance.
+  // Other instances independently read the same authoritative database value.
+  if (setupCheckInFlight) return setupCheckInFlight;
+
+  setupCheckInFlight = (async () => {
+    try {
+      const setting = await prisma.settings.findUnique({
+        where: { key: "setup_completed" },
+        select: { value: true },
+      });
+      setupCompleted = setting?.value === "true";
+      if (setupCompleted) setupCheckedAt = Date.now();
+      return setupCompleted;
+    } catch (error) {
+      // An unavailable setup check must not trap an already configured instance
+      // in a redirect loop. Authentication and authorization still run normally.
+      console.error("Failed to read setup state", error);
+      return null;
+    } finally {
+      setupCheckInFlight = null;
+    }
+  })();
+
+  return setupCheckInFlight;
+}
 
 function withNoCache(res: NextResponse, path: string): NextResponse {
   if (path.startsWith("/api/")) {
@@ -32,24 +66,10 @@ export async function proxy(req: NextRequest) {
     return res;
   }
 
-  // Check if setup is completed — redirect to /setup if not (cached 60s)
-  if (!setupCompleted || Date.now() - setupCheckedAt > 60_000) {
-    try {
-      const statusUrl = req.nextUrl.clone();
-      statusUrl.pathname = "/api/setup/status";
-      statusUrl.search = "";
-      const statusRes = await fetch(statusUrl, { cache: "no-store" });
-      if (statusRes.ok) {
-        const data = await statusRes.json();
-        setupCompleted = !!data.completed;
-        setupCheckedAt = Date.now();
-      }
-    } catch {
-      // If status check fails, continue normally
-    }
-  }
-
-  if (!setupCompleted) {
+  // Redirect only when the authoritative setup state is known to be incomplete.
+  // If the database check fails, continue to the normal authentication flow.
+  const setupState = await getSetupCompleted();
+  if (setupState === false) {
     logRequest(method, path, 302, Date.now() - start, "setup-redirect");
     const setupUrl = req.nextUrl.clone();
     setupUrl.pathname = "/setup";
@@ -64,11 +84,12 @@ export async function proxy(req: NextRequest) {
     return res;
   }
 
-  // Allow API key authentication for API routes
+  // API keys authenticate only the Ollama gateway, where the key is validated.
   const authHeader = req.headers.get("authorization");
   const hasApiKey = !!authHeader && authHeader.startsWith("Bearer oa-");
+  const isOllamaProxy = path === "/api/proxy" || path.startsWith("/api/proxy/");
 
-  if (hasApiKey && path.startsWith("/api/")) {
+  if (hasApiKey && isOllamaProxy) {
     const res = withNoCache(NextResponse.next(), path);
     logRequest(method, path, res.status, Date.now() - start, "api-key");
     return res;
