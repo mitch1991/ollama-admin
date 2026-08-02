@@ -1,17 +1,14 @@
 import { NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { guardActiveSetupAdmin } from "@/lib/require-active-setup-admin";
+import {
+  buildOllamaUrl,
+  formatOllamaConnectionError,
+} from "@/lib/ollama";
 
 export async function POST(req: NextRequest) {
-  // Only allow during setup (before setup is completed)
-  const setting = await prisma.settings.findUnique({
-    where: { key: "setup_completed" },
-  });
-  if (setting?.value === "true") {
-    return new Response(JSON.stringify({ error: "Setup already completed" }), {
-      status: 403,
-      headers: { "Content-Type": "application/json" },
-    });
-  }
+  const guardResponse = await guardActiveSetupAdmin();
+  if (guardResponse) return guardResponse;
 
   const { serverId, name } = await req.json();
 
@@ -30,11 +27,21 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  const ollamaRes = await fetch(`${server.url}/api/pull`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name, stream: true }),
-  });
+  let ollamaRes: Response;
+  try {
+    ollamaRes = await fetch(buildOllamaUrl(server.url, "/api/pull"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, stream: true }),
+    });
+  } catch (error) {
+    return new Response(
+      JSON.stringify({
+        error: formatOllamaConnectionError(server.url, error),
+      }),
+      { status: 502, headers: { "Content-Type": "application/json" } }
+    );
+  }
 
   if (!ollamaRes.ok || !ollamaRes.body) {
     return new Response(

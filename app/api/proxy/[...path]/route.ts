@@ -4,6 +4,11 @@ import { logger } from "@/lib/logger";
 import { logAsync } from "@/lib/log-async";
 import { withRateLimit } from "@/lib/with-rate-limit";
 import { validateApiKey } from "@/lib/validate-api-key";
+import {
+  buildOllamaUrl,
+  formatOllamaConnectionError,
+  redactOllamaUrl,
+} from "@/lib/ollama";
 
 async function proxyToOllama(req: NextRequest) {
   let apiKeyId: string | undefined;
@@ -59,9 +64,24 @@ async function proxyToOllama(req: NextRequest) {
     }
   }
 
-  const ollamaUrl = `${server.url}${path}`;
+  let ollamaUrl: string;
+  const displayOllamaUrl = `${redactOllamaUrl(server.url)}${path}`;
   const bodySize = body ? body.length : 0;
-  logger.info("Proxy forwarding", { method: req.method, ollamaUrl, model, server: server.name, bodyBytes: bodySize });
+  try {
+    ollamaUrl = buildOllamaUrl(server.url, path);
+  } catch (error) {
+    const message = formatOllamaConnectionError(server.url, error);
+    logger.error("Proxy connection failed", {
+      ollamaUrl: displayOllamaUrl,
+      error: message,
+      model,
+    });
+    return new Response(JSON.stringify({ error: message }), {
+      status: 502,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+  logger.info("Proxy forwarding", { method: req.method, ollamaUrl: displayOllamaUrl, model, server: server.name, bodyBytes: bodySize });
 
   try {
     const ollamaRes = await fetch(ollamaUrl, {
@@ -74,9 +94,9 @@ async function proxyToOllama(req: NextRequest) {
     const statusCode = ollamaRes.status;
 
     if (statusCode >= 400) {
-      logger.warn("Proxy upstream error", { ollamaUrl, statusCode, latencyMs, model });
+      logger.warn("Proxy upstream error", { ollamaUrl: displayOllamaUrl, statusCode, latencyMs, model });
     } else {
-      logger.debug("Proxy response", { ollamaUrl, statusCode, latencyMs });
+      logger.debug("Proxy response", { ollamaUrl: displayOllamaUrl, statusCode, latencyMs });
     }
 
     logAsync({
@@ -98,9 +118,9 @@ async function proxyToOllama(req: NextRequest) {
     });
   } catch (err) {
     const latencyMs = Date.now() - startTime;
-    const message = err instanceof Error ? err.message : "Proxy error";
+    const message = formatOllamaConnectionError(server.url, err);
 
-    logger.error("Proxy connection failed", { ollamaUrl, error: message, latencyMs, model });
+    logger.error("Proxy connection failed", { ollamaUrl: displayOllamaUrl, error: message, latencyMs, model });
 
     logAsync({
       serverId: server.id,

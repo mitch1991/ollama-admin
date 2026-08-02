@@ -2,6 +2,7 @@ export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { logger } from "@/lib/logger";
+import { buildOllamaUrl, redactOllamaUrl } from "@/lib/ollama";
 
 interface RunningModel {
   name: string;
@@ -132,14 +133,14 @@ export async function GET() {
       const result: ServerStatus = {
         id: server.id,
         name: server.name,
-        url: server.url,
+        url: redactOllamaUrl(server.url),
         status: "offline",
         runningModels: [],
         gpu: null,
       };
 
       try {
-        const res = await fetch(`${server.url}/api/version`, {
+        const res = await fetch(buildOllamaUrl(server.url, "/api/version"), {
           signal: AbortSignal.timeout(4000),
         });
         if (res.ok) {
@@ -153,7 +154,7 @@ export async function GET() {
 
       if (result.status === "online") {
         try {
-          const psRes = await fetch(`${server.url}/api/ps`, {
+          const psRes = await fetch(buildOllamaUrl(server.url, "/api/ps"), {
             signal: AbortSignal.timeout(4000),
           });
           if (psRes.ok) {

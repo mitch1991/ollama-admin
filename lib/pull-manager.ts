@@ -1,4 +1,8 @@
 import { logger } from "@/lib/logger";
+import {
+  buildOllamaUrl,
+  formatOllamaConnectionError,
+} from "@/lib/ollama";
 
 export interface PullJob {
   id: string;
@@ -44,10 +48,10 @@ class PullManager {
   }
 
   private async runPull(job: PullJob, serverUrl: string, modelRef: string) {
-    const url = `${serverUrl.replace(/\/$/, "")}/api/pull`;
     logger.info("Pull started", { model: modelRef, serverId: job.serverId });
 
     try {
+      const url = buildOllamaUrl(serverUrl, "/api/pull");
       const res = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -106,7 +110,7 @@ class PullManager {
       logger.info("Pull completed", { model: modelRef });
     } catch (e) {
       job.status = "error";
-      job.error = e instanceof Error ? e.message : "Unknown error";
+      job.error = formatOllamaConnectionError(serverUrl, e);
       logger.error("Pull error", { model: modelRef, error: job.error });
     }
 

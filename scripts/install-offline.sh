@@ -205,6 +205,8 @@ services:
     user: "0:0"
     ports:
       - "${PORT}:3000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
       DATABASE_URL: \${DATABASE_URL:-file:/data/ollama-admin.db}
       DEFAULT_OLLAMA_URL: \${DEFAULT_OLLAMA_URL:-${OLLAMA_URL}}

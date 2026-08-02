@@ -185,16 +185,21 @@ export default function ServersPage() {
     try {
       const res = await fetch(`/api/servers/${id}/test`, { method: "POST" });
       const data = await res.json();
+      const status = data.status === "online" ? "online" : "offline";
       setHealth((prev) => ({
         ...prev,
-        [id]: { id, status: data.status, version: data.version },
+        [id]: { id, status, version: data.version },
       }));
-      if (data.status === "online") {
+      if (status === "online") {
         toast(`Connection successful (v${data.version || "?"})`, "success");
       } else {
-        toast("Connection failed", "error");
+        toast(data.error || "Connection failed", "error");
       }
     } catch {
+      setHealth((prev) => ({
+        ...prev,
+        [id]: { id, status: "offline" },
+      }));
       toast("Connection failed", "error");
     } finally {
       setTestingId(null);
@@ -284,7 +289,7 @@ export default function ServersPage() {
                 value={form.url}
                 onChange={(e) => setForm({ ...form, url: e.target.value })}
                 required
-                placeholder="http://localhost:11434"
+                placeholder="http://host.docker.internal:11434"
               />
               <Input
                 label={t("gpuAgentUrl")}

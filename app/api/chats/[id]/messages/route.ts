@@ -3,6 +3,10 @@ import { prisma } from "@/lib/prisma";
 import { checkRateLimit, getRateLimitConfig } from "@/lib/rate-limit";
 import { getRateLimitKey } from "@/lib/with-rate-limit";
 import { logger } from "@/lib/logger";
+import {
+  buildOllamaUrl,
+  formatOllamaConnectionError,
+} from "@/lib/ollama";
 import { logAsync } from "@/lib/log-async";
 
 function buildOllamaRequest(
@@ -34,7 +38,7 @@ function buildOllamaRequest(
     options.stop = chatParams.stop.split(",").map((s: string) => s.trim());
 
   return {
-    url: `${chat.server.url}/api/chat`,
+    url: buildOllamaUrl(chat.server.url, "/api/chat"),
     body: {
       model: chat.model,
       messages,
@@ -229,15 +233,27 @@ export async function POST(
   ];
 
   const startTime = Date.now();
-  const { url, body } = buildOllamaRequest(chat, ollamaMessages);
-
   logger.info("Chat request", { chatId: chat.id, model: chat.model, server: chat.server.name });
 
-  const ollamaRes = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
+  let ollamaRes: Response;
+  try {
+    const { url, body } = buildOllamaRequest(chat, ollamaMessages);
+    ollamaRes = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  } catch (error) {
+    const message = formatOllamaConnectionError(chat.server.url, error);
+    logger.error("Ollama chat connection failed", {
+      chatId: chat.id,
+      error: message,
+    });
+    return new Response(JSON.stringify({ error: message }), {
+      status: 502,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
 
   if (!ollamaRes.ok || !ollamaRes.body) {
     logger.error("Ollama chat error", { chatId: chat.id, status: ollamaRes.status });
