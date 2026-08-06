@@ -119,6 +119,9 @@ cp .env.docker.example .env   # edit NEXTAUTH_SECRET and other settings as neede
 docker compose up -d
 ```
 
+Compose refreshes the selected image before starting it. Set `VERSION` to pin a
+release; the default is `latest`.
+
 Open [http://localhost:3000](http://localhost:3000).
 
 <details>
@@ -708,7 +711,8 @@ Docker images are tagged as `:latest`, `:0.11.0`, `:0.11`, `:0`, and `:sha-<comm
 <summary><strong>"Connection refused" when adding an Ollama server</strong></summary>
 
 - Verify Ollama is running: `ollama list`
-- From Docker, use `http://host.docker.internal:11434` instead of `localhost`. The official Compose file maps this name to the host gateway on Linux and WSL.
+- In the official Docker Compose deployment, `http://localhost:11434` is accepted and routed through `host.docker.internal` while preserving the selected protocol, port, and path. The Compose file maps that name to the host gateway on Linux and WSL.
+- Existing Compose installations created before this behavior was added must run `docker compose pull && docker compose up -d` once to replace a cached `latest` image.
 - Ollama binds to `127.0.0.1:11434` by default. For a systemd installation on Linux/WSL, run `sudo systemctl edit ollama.service`, add the two lines shown below, then run `sudo systemctl daemon-reload && sudo systemctl restart ollama`:
 
   ```ini
@@ -718,6 +722,7 @@ Docker images are tagged as `:latest`, `:0.11.0`, `:0.11`, `:0`, and `:sha-<comm
 
 - Binding to `0.0.0.0` exposes Ollama on every host interface, and Ollama does not provide perimeter authentication by default. Restrict port `11434` to trusted Docker bridge networks/interfaces and do not publish it to the Internet.
 - If you maintain a custom Compose file on Linux/WSL, add `extra_hosts: ["host.docker.internal:host-gateway"]` to the Ollama Admin service.
+- Connection-test logs include both `requestedUrl` and `effectiveUrl`, so `docker compose logs ollama-admin` shows whether a loopback address was routed to the Docker host.
 
 See the [Docker host networking guidance](https://docs.docker.com/compose/how-tos/networking/#connect-a-container-to-a-service-on-the-host) and [Ollama FAQ](https://github.com/ollama/ollama/blob/main/docs/faq.mdx#how-can-i-expose-ollama-on-my-network) for the underlying settings.
 

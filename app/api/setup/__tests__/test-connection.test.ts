@@ -13,6 +13,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
 });
 
 describe("POST /api/setup/test-connection", () => {
@@ -34,6 +35,31 @@ describe("POST /api/setup/test-connection", () => {
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toMatchObject({ status: "online" });
+  });
+
+  it("tests localhost through the configured Docker host", async () => {
+    vi.stubEnv(
+      "DEFAULT_OLLAMA_URL",
+      "http://host.docker.internal:11434"
+    );
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ version: "0.11.0" }),
+    }));
+
+    const { POST } = await import("@/app/api/setup/test-connection/route");
+    const response = await POST(
+      new Request("http://localhost/api/setup/test-connection", {
+        method: "POST",
+        body: JSON.stringify({ url: "http://localhost:11439" }),
+      }) as any
+    );
+
+    expect(response.status).toBe(200);
+    expect(fetch).toHaveBeenCalledWith(
+      "http://host.docker.internal:11439/api/version",
+      expect.anything()
+    );
   });
 
   it("returns 502 and preserves the connection guidance", async () => {

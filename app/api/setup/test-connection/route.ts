@@ -3,8 +3,11 @@ import {
   formatOllamaConnectionError,
   getVersion,
   normalizeOllamaUrl,
+  redactOllamaUrl,
+  resolveOllamaUrl,
 } from "@/lib/ollama";
 import { guardActiveSetupAdmin } from "@/lib/require-active-setup-admin";
+import { logger } from "@/lib/logger";
 
 export async function POST(req: NextRequest) {
   const guardResponse = await guardActiveSetupAdmin();
@@ -31,12 +34,27 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  const requestedUrl = redactOllamaUrl(url);
+  const effectiveUrl = redactOllamaUrl(resolveOllamaUrl(url));
+
   try {
     const version = await getVersion(url);
+    logger.info("Ollama setup connection test completed", {
+      status: "online",
+      requestedUrl,
+      effectiveUrl,
+    });
     return NextResponse.json({ status: "online", version: version.version });
   } catch (err) {
+    const error = formatOllamaConnectionError(url, err);
+    logger.warn("Ollama setup connection test completed", {
+      status: "offline",
+      requestedUrl,
+      effectiveUrl,
+      error,
+    });
     return NextResponse.json(
-      { status: "offline", error: formatOllamaConnectionError(url, err) },
+      { status: "offline", error },
       { status: 502 }
     );
   }

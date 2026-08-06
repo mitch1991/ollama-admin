@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { formatOllamaConnectionError, getVersion } from "@/lib/ollama";
+import {
+  formatOllamaConnectionError,
+  getVersion,
+  redactOllamaUrl,
+  resolveOllamaUrl,
+} from "@/lib/ollama";
 import { requireAdmin } from "@/lib/require-admin";
 import { logger } from "@/lib/logger";
 
@@ -22,11 +27,21 @@ export async function POST(
     return NextResponse.json({ error: "Server not found" }, { status: 404 });
   }
 
+  const requestedUrl = redactOllamaUrl(server.url);
+  let effectiveUrl = requestedUrl;
+  try {
+    effectiveUrl = redactOllamaUrl(resolveOllamaUrl(server.url));
+  } catch {
+    // Keep legacy invalid database values diagnosable through the normal 502 path.
+  }
+
   try {
     const version = await getVersion(server.url);
     logger.info("Ollama connection test completed", {
       serverId: server.id,
       status: "online",
+      requestedUrl,
+      effectiveUrl,
     });
     return NextResponse.json({
       status: "online",
@@ -37,6 +52,8 @@ export async function POST(
     logger.warn("Ollama connection test completed", {
       serverId: server.id,
       status: "offline",
+      requestedUrl,
+      effectiveUrl,
       error,
     });
     return NextResponse.json(
