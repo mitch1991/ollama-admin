@@ -3,6 +3,7 @@ version: "3.9"
 services:
   ollama-admin:
     image: ghcr.io/ollama-admin/ollama-admin:${VERSION:-latest}
+    pull_policy: always
     # Repair the SQLite volume, then the entrypoint drops to UID/GID 1001.
     user: "0:0"
     build:

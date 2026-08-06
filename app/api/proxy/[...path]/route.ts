@@ -65,10 +65,11 @@ async function proxyToOllama(req: NextRequest) {
   }
 
   let ollamaUrl: string;
-  const displayOllamaUrl = `${redactOllamaUrl(server.url)}${path}`;
+  let displayOllamaUrl = `${redactOllamaUrl(server.url)}${path}`;
   const bodySize = body ? body.length : 0;
   try {
     ollamaUrl = buildOllamaUrl(server.url, path);
+    displayOllamaUrl = redactOllamaUrl(ollamaUrl);
   } catch (error) {
     const message = formatOllamaConnectionError(server.url, error);
     logger.error("Proxy connection failed", {

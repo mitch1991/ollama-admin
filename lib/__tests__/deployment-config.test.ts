@@ -29,4 +29,15 @@ describe("Docker host access configuration", () => {
       'DEFAULT_OLLAMA_URL="http://host.docker.internal:11434"'
     );
   });
+
+  it("refreshes the mutable latest image before Compose starts it", () => {
+    const contents = readFileSync(
+      resolve(process.cwd(), "docker-compose.yml"),
+      "utf8"
+    );
+
+    expect(contents).toMatch(
+      /image: ghcr\.io\/ollama-admin\/ollama-admin:\$\{VERSION:-latest\}\n {4}pull_policy: always/
+    );
+  });
 });

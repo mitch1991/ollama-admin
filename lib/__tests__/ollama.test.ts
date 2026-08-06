@@ -5,10 +5,12 @@ import {
   normalizeOllamaUrl,
   ollamaFetch,
   redactOllamaUrl,
+  resolveOllamaUrl,
 } from "@/lib/ollama";
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
 });
 
 describe("ollamaFetch", () => {
@@ -55,6 +57,61 @@ describe("ollamaFetch", () => {
       expect.anything()
     );
   });
+
+  it("reaches the Docker host when a saved server uses localhost", async () => {
+    vi.stubEnv(
+      "DEFAULT_OLLAMA_URL",
+      "http://host.docker.internal:11434"
+    );
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ version: "0.11.0" }),
+    }));
+
+    await ollamaFetch("http://localhost:11439", "/api/version");
+
+    expect(fetch).toHaveBeenCalledWith(
+      "http://host.docker.internal:11439/api/version",
+      expect.anything()
+    );
+  });
+});
+
+describe("resolveOllamaUrl", () => {
+  it.each([
+    "http://localhost:11439/base",
+    "http://localhost.:11439/base",
+    "http://127.42.0.1:11439/base",
+    "http://[::1]:11439/base",
+  ])("maps loopback host %s to the configured Docker host", (url) => {
+    vi.stubEnv(
+      "DEFAULT_OLLAMA_URL",
+      "http://host.docker.internal:11434"
+    );
+
+    expect(resolveOllamaUrl(url)).toBe(
+      "http://host.docker.internal:11439/base"
+    );
+  });
+
+  it("leaves localhost unchanged outside the Docker host configuration", () => {
+    vi.stubEnv("DEFAULT_OLLAMA_URL", "http://localhost:11434");
+
+    expect(resolveOllamaUrl("http://localhost:11439")).toBe(
+      "http://localhost:11439"
+    );
+  });
+
+  it("never rewrites a non-loopback server", () => {
+    vi.stubEnv(
+      "DEFAULT_OLLAMA_URL",
+      "http://host.docker.internal:11434"
+    );
+
+    expect(resolveOllamaUrl("https://ollama.example.com:11439")).toBe(
+      "https://ollama.example.com:11439"
+    );
+  });
 });
 
 describe("formatOllamaConnectionError", () => {
@@ -94,6 +151,24 @@ describe("formatOllamaConnectionError", () => {
         error
       )
     ).toContain("OLLAMA_HOST=0.0.0.0:11434");
+  });
+
+  it("reports the effective Docker target for a rewritten localhost failure", () => {
+    vi.stubEnv(
+      "DEFAULT_OLLAMA_URL",
+      "http://host.docker.internal:11434"
+    );
+    const error = Object.assign(new TypeError("fetch failed"), {
+      cause: { code: "ECONNREFUSED" },
+    });
+
+    const message = formatOllamaConnectionError(
+      "http://localhost:11439",
+      error
+    );
+
+    expect(message).toContain("http://host.docker.internal:11439");
+    expect(message).toContain("OLLAMA_HOST=0.0.0.0:11434");
   });
 
   it("preserves an HTTP error returned by Ollama", () => {

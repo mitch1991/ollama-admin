@@ -29,6 +29,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
 });
 
 describe("POST /api/servers/[id]/test", () => {
@@ -63,6 +64,32 @@ describe("POST /api/servers/[id]/test", () => {
       status: "online",
       version: "0.11.0",
     });
+  });
+
+  it("tests a saved localhost server through the configured Docker host", async () => {
+    vi.stubEnv(
+      "DEFAULT_OLLAMA_URL",
+      "http://host.docker.internal:11434"
+    );
+    (prisma.server.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...server,
+      url: "http://localhost:11439",
+    });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ version: "0.11.0" }),
+    }));
+
+    const { POST } = await import("@/app/api/servers/[id]/test/route");
+    const response = await POST(new Request("http://localhost") as any, {
+      params: Promise.resolve({ id: server.id }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(fetch).toHaveBeenCalledWith(
+      "http://host.docker.internal:11439/api/version",
+      expect.anything()
+    );
   });
 
   it("returns 502 with an actionable error when Ollama is unreachable", async () => {

@@ -93,6 +93,51 @@ export function normalizeOllamaUrl(value: unknown): string {
   return parsed.toString().replace(/\/$/, "");
 }
 
+function normalizeHostname(hostname: string): string {
+  return hostname.toLowerCase().replace(/^\[|\]$/g, "").replace(/\.$/, "");
+}
+
+function isLoopbackHostname(hostname: string): boolean {
+  const normalized = normalizeHostname(hostname);
+  return (
+    normalized === "localhost" ||
+    normalized === "::1" ||
+    normalized === "0.0.0.0" ||
+    /^127(?:\.\d{1,3}){3}$/.test(normalized)
+  );
+}
+
+/**
+ * Resolve a loopback URL to the Docker host in official container deployments.
+ *
+ * The public URL remains unchanged in the database and UI. Only the transport
+ * target is rewritten, and only when DEFAULT_OLLAMA_URL explicitly selects the
+ * host.docker.internal alias supplied by the official Compose configuration.
+ */
+export function resolveOllamaUrl(baseUrl: string): string {
+  const normalizedBaseUrl = normalizeOllamaUrl(baseUrl);
+  const parsed = new URL(normalizedBaseUrl);
+
+  if (!isLoopbackHostname(parsed.hostname)) return normalizedBaseUrl;
+
+  const configuredDefault = process.env.DEFAULT_OLLAMA_URL;
+  if (!configuredDefault) return normalizedBaseUrl;
+
+  try {
+    const configuredUrl = new URL(normalizeOllamaUrl(configuredDefault));
+    if (normalizeHostname(configuredUrl.hostname) !== "host.docker.internal") {
+      return normalizedBaseUrl;
+    }
+
+    // Preserve the user-selected protocol, port and path. Only loopback has a
+    // different meaning across the container boundary.
+    parsed.hostname = configuredUrl.hostname;
+    return parsed.toString().replace(/\/$/, "");
+  } catch {
+    return normalizedBaseUrl;
+  }
+}
+
 export function redactOllamaUrl(value: string): string {
   try {
     const parsed = new URL(value);
@@ -107,7 +152,7 @@ export function redactOllamaUrl(value: string): string {
 }
 
 export function buildOllamaUrl(baseUrl: string, path: string): string {
-  const normalizedBaseUrl = normalizeOllamaUrl(baseUrl);
+  const normalizedBaseUrl = resolveOllamaUrl(baseUrl);
   const normalizedPath = path.startsWith("/") ? path : `/${path}`;
   return `${normalizedBaseUrl}${normalizedPath}`;
 }
@@ -125,21 +170,18 @@ export function formatOllamaConnectionError(
   let hostname = "";
   let displayUrl = baseUrl;
   try {
-    const parsed = new URL(baseUrl);
+    const effectiveBaseUrl = resolveOllamaUrl(baseUrl);
+    const parsed = new URL(effectiveBaseUrl);
     hostname = parsed.hostname.toLowerCase();
-    displayUrl = redactOllamaUrl(baseUrl);
+    displayUrl = redactOllamaUrl(effectiveBaseUrl);
   } catch {
     return `Invalid Ollama URL: ${redactOllamaUrl(baseUrl)}`;
   }
 
   const codes = collectErrorCodes(error);
   const codeSuffix = codes.size > 0 ? ` (${Array.from(codes).join(", ")})` : "";
-  hostname = hostname.replace(/^\[|\]$/g, "").replace(/\.$/, "");
-  const isLoopback =
-    hostname === "localhost" ||
-    hostname === "::1" ||
-    hostname === "0.0.0.0" ||
-    /^127(?:\.\d{1,3}){3}$/.test(hostname);
+  hostname = normalizeHostname(hostname);
+  const isLoopback = isLoopbackHostname(hostname);
 
   if (isLoopback) {
     return `Could not reach Ollama at ${displayUrl}${codeSuffix}. From Docker, localhost points to the Ollama Admin container. Use http://host.docker.internal:11434 instead.`;
