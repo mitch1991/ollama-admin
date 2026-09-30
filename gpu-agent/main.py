@@ -1,7 +1,8 @@
 """
 Ollama Admin GPU Agent — Lightweight sidecar that exposes GPU metrics via HTTP.
 
-Supports NVIDIA (nvidia-smi), AMD (rocm-smi), Intel (xpu-smi), and Apple Silicon (Metal).
+Supports NVIDIA (nvidia-smi), NVIDIA Jetson (tegrastats), AMD (rocm-smi),
+Intel (xpu-smi), and Apple Silicon (Metal).
 Deploy alongside each Ollama server to enable GPU monitoring in Ollama Admin.
 """
 
@@ -9,6 +10,8 @@ import json
 import os
 import platform
 import plistlib
+import re
+import select
 import shutil
 import subprocess
 
@@ -20,12 +23,15 @@ app = FastAPI(title="Ollama Admin GPU Agent", version="1.2.0")
 MIB_TO_BYTES = 1024 * 1024
 GIB_TO_BYTES = 1024 * 1024 * 1024
 GPU_BACKEND = os.getenv("GPU_BACKEND", "auto")
+TEGRASTATS_PATH = os.getenv("TEGRASTATS_PATH", "tegrastats")
 
 
 def detect_backend() -> str | None:
-    """Detect available GPU backend: nvidia, amd, intel, apple, or None."""
-    if GPU_BACKEND in ("nvidia", "amd", "intel", "apple"):
+    """Detect available GPU backend: jetson, nvidia, amd, intel, apple, or None."""
+    if GPU_BACKEND in ("jetson", "nvidia", "amd", "intel", "apple"):
         return GPU_BACKEND
+    if shutil.which("tegrastats"):
+        return "jetson"
     if shutil.which("nvidia-smi"):
         return "nvidia"
     if shutil.which("rocm-smi"):
@@ -69,6 +75,65 @@ def query_nvidia() -> list[dict]:
             }
         )
     return gpus
+
+
+def parse_tegrastats(sample: str) -> dict:
+    """Translate one tegrastats sample to the GPU agent response schema."""
+
+    def required(pattern: str, field: str) -> re.Match[str]:
+        match = re.search(pattern, sample)
+        if match is None:
+            raise RuntimeError(f"tegrastats did not report {field}")
+        return match
+
+    ram = required(r"\bRAM\s+(\d+)/(\d+)MB\b", "unified memory")
+    gpu = required(r"\bGR3D_FREQ\s+(\d+)%", "GPU utilization")
+    temperature = required(r"\bgpu@([0-9.]+)C\b", "GPU temperature")
+    power = re.search(r"\bVDD_CPU_GPU_CV\s+(\d+)mW(?:/(\d+)mW)?", sample)
+
+    used_mib = int(ram.group(1))
+    total_mib = int(ram.group(2))
+
+    return {
+        "name": "NVIDIA Jetson (unified memory)",
+        "memoryTotal": total_mib * MIB_TO_BYTES,
+        "memoryUsed": used_mib * MIB_TO_BYTES,
+        "memoryFree": max(0, total_mib - used_mib) * MIB_TO_BYTES,
+        "temperature": int(round(float(temperature.group(1)))),
+        "utilization": int(gpu.group(1)),
+        # Jetson exposes a combined CPU/GPU/CV rail rather than GPU-only power.
+        "powerDraw": round(int(power.group(1)) / 1000, 2) if power else None,
+        "memoryType": "unified",
+        "powerScope": "CPU_GPU_CV",
+    }
+
+
+def query_jetson() -> list[dict]:
+    """Query an NVIDIA Jetson using the platform-provided tegrastats tool."""
+    process = subprocess.Popen(
+        [TEGRASTATS_PATH, "--interval", "100"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        if process.stdout is None:
+            raise RuntimeError("tegrastats stdout is unavailable")
+        ready, _, _ = select.select([process.stdout], [], [], 10)
+        if not ready:
+            raise RuntimeError("tegrastats timed out waiting for a sample")
+        sample = process.stdout.readline().strip()
+        if not sample:
+            error = process.stderr.read().strip() if process.stderr else ""
+            raise RuntimeError(f"tegrastats returned no data: {error}")
+        return [parse_tegrastats(sample)]
+    finally:
+        process.terminate()
+        try:
+            process.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=2)
 
 
 def query_amd() -> list[dict]:
@@ -292,12 +357,14 @@ def get_gpu_info():
             status_code=503,
             content={
                 "error": "No GPU backend available. "
-                "Install nvidia-smi, rocm-smi, xpu-smi, or run on macOS."
+                "Install tegrastats, nvidia-smi, rocm-smi, xpu-smi, or run on macOS."
             },
         )
 
     try:
-        if backend == "nvidia":
+        if backend == "jetson":
+            gpus = query_jetson()
+        elif backend == "nvidia":
             gpus = query_nvidia()
         elif backend == "amd":
             gpus = query_amd()

@@ -10,9 +10,11 @@ from main import (
     MIB_TO_BYTES,
     app,
     detect_backend,
+    parse_tegrastats,
     query_amd,
     query_apple,
     query_intel,
+    query_jetson,
     query_nvidia,
 )
 
@@ -24,6 +26,11 @@ NVIDIA_SMI_OUTPUT = (
 )
 
 NVIDIA_SMI_SINGLE = "NVIDIA RTX 4090, 24576, 8192, 16384, 65, 45\n"
+TEGRASTATS_OUTPUT = (
+    "RAM 2284/7620MB (lfb 200x4MB) CPU [1%@729,0%@729] "
+    "GR3D_FREQ 42%@[729] gpu@57.5C "
+    "VDD_IN 5664mW/5680mW VDD_CPU_GPU_CV 1380mW/1300mW"
+)
 
 ROCM_SMI_OUTPUT = (
     "card series,temperature,gpu use (%),vram total memory (b),vram total used memory (b)\n"
@@ -85,6 +92,10 @@ class TestHealthEndpoint:
 class TestDetectBackend:
     """Tests for backend auto-detection."""
 
+    @patch("main.GPU_BACKEND", "jetson")
+    def test_forced_jetson(self):
+        assert detect_backend() == "jetson"
+
     @patch("main.GPU_BACKEND", "nvidia")
     def test_forced_nvidia(self):
         assert detect_backend() == "nvidia"
@@ -100,6 +111,14 @@ class TestDetectBackend:
     @patch("main.GPU_BACKEND", "apple")
     def test_forced_apple(self):
         assert detect_backend() == "apple"
+
+    @patch("main.GPU_BACKEND", "auto")
+    @patch(
+        "main.shutil.which",
+        side_effect=lambda cmd: "/usr/bin/tegrastats" if cmd == "tegrastats" else None,
+    )
+    def test_auto_detects_jetson(self, _mock):
+        assert detect_backend() == "jetson"
 
     @patch("main.GPU_BACKEND", "auto")
     @patch("main.shutil.which", side_effect=lambda cmd: (
@@ -173,6 +192,64 @@ class TestQueryNvidia:
         mock_run.return_value = MagicMock(returncode=0, stdout="bad line\n", stderr="")
         gpus = query_nvidia()
         assert len(gpus) == 0
+
+
+class TestQueryJetson:
+    """Tests for NVIDIA Jetson tegrastats parsing and collection."""
+
+    def test_parses_tegrastats(self):
+        gpu = parse_tegrastats(TEGRASTATS_OUTPUT)
+
+        assert gpu["name"] == "NVIDIA Jetson (unified memory)"
+        assert gpu["memoryTotal"] == 7620 * MIB_TO_BYTES
+        assert gpu["memoryUsed"] == 2284 * MIB_TO_BYTES
+        assert gpu["memoryFree"] == (7620 - 2284) * MIB_TO_BYTES
+        assert gpu["temperature"] == 58
+        assert gpu["utilization"] == 42
+        assert gpu["powerDraw"] == 1.38
+        assert gpu["memoryType"] == "unified"
+        assert gpu["powerScope"] == "CPU_GPU_CV"
+
+    def test_power_is_optional(self):
+        gpu = parse_tegrastats(TEGRASTATS_OUTPUT.split(" VDD_IN", 1)[0])
+        assert gpu["powerDraw"] is None
+
+    def test_requires_core_metrics(self):
+        try:
+            parse_tegrastats("RAM 100/200MB")
+            assert False, "Should have raised"
+        except RuntimeError as error:
+            assert "GPU utilization" in str(error)
+
+    @patch("main.select.select")
+    @patch("main.subprocess.Popen")
+    def test_queries_tegrastats_and_terminates(self, mock_popen, mock_select):
+        process = MagicMock()
+        process.stdout.readline.return_value = TEGRASTATS_OUTPUT
+        mock_popen.return_value = process
+        mock_select.return_value = ([process.stdout], [], [])
+
+        gpus = query_jetson()
+
+        assert len(gpus) == 1
+        assert gpus[0]["utilization"] == 42
+        mock_popen.assert_called_once()
+        process.terminate.assert_called_once()
+        process.wait.assert_called_once_with(timeout=2)
+
+    @patch("main.select.select", return_value=([], [], []))
+    @patch("main.subprocess.Popen")
+    def test_times_out_and_terminates(self, mock_popen, _mock_select):
+        process = MagicMock()
+        mock_popen.return_value = process
+
+        try:
+            query_jetson()
+            assert False, "Should have raised"
+        except RuntimeError as error:
+            assert "timed out" in str(error)
+
+        process.terminate.assert_called_once()
 
 
 class TestQueryAmd:
@@ -329,6 +406,19 @@ class TestQueryApple:
 
 class TestGpuEndpoint:
     """Tests for GET /gpu endpoint."""
+
+    @patch("main.detect_backend", return_value="jetson")
+    @patch("main.query_jetson")
+    def test_returns_jetson_data(self, mock_query, _mock_backend):
+        mock_query.return_value = [parse_tegrastats(TEGRASTATS_OUTPUT)]
+
+        res = client.get("/gpu")
+
+        assert res.status_code == 200
+        data = res.json()
+        assert len(data) == 1
+        assert data[0]["name"] == "NVIDIA Jetson (unified memory)"
+        assert data[0]["memoryType"] == "unified"
 
     @patch("main.detect_backend", return_value="nvidia")
     @patch("main.query_nvidia")
